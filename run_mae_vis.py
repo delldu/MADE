@@ -33,6 +33,7 @@ from datasets import DataAugmentationForMAE
 from torchvision.transforms import ToPILImage
 from einops import rearrange
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+import pdb
 
 def get_args():
     parser = argparse.ArgumentParser('MAE visualization reconstruction script', add_help=False)
@@ -105,31 +106,43 @@ def main(args):
         mean = torch.as_tensor(IMAGENET_DEFAULT_MEAN).to(device)[None, :, None, None]
         std = torch.as_tensor(IMAGENET_DEFAULT_STD).to(device)[None, :, None, None]
         ori_img = img * std + mean  # in [0, 1]
-        img = ToPILImage()(ori_img[0, :])
+
+
+        img = ToPILImage()(ori_img[0, :].cpu())
         img.save(f"{args.save_path}/ori_img.jpg")
+        # img.size -- (224, 224)
 
         img_squeeze = rearrange(ori_img, 'b c (h p1) (w p2) -> b (h w) (p1 p2) c', p1=patch_size[0], p2=patch_size[0])
         img_norm = (img_squeeze - img_squeeze.mean(dim=-2, keepdim=True)) / (img_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6)
+        # (Pdb) img_squeeze.size() -- torch.Size([1, 196, 256, 3])
+        # img_squeeze.size() -- torch.Size([1, 196, 256, 3])
+
         img_patch = rearrange(img_norm, 'b n p c -> b n (p c)')
         img_patch[bool_masked_pos] = outputs
+        # img_patch.size() -- torch.Size([1, 196, 768])
+        # bool_masked_pos.size() -- torch.Size([1, 196])
+        # outputs.size() -- torch.Size([1, 147, 768])
 
         #make mask
         mask = torch.ones_like(img_patch)
         mask[bool_masked_pos] = 0
         mask = rearrange(mask, 'b n (p c) -> b n p c', c=3)
         mask = rearrange(mask, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=patch_size[0], p2=patch_size[1], h=14, w=14)
+        # mask.size() -- torch.Size([1, 3, 224, 224])
 
         #save reconstruction img
         rec_img = rearrange(img_patch, 'b n (p c) -> b n p c', c=3)
         # Notice: To visualize the reconstruction image, we add the predict and the original mean and var of each patch. Issue #40
         rec_img = rec_img * (img_squeeze.var(dim=-2, unbiased=True, keepdim=True).sqrt() + 1e-6) + img_squeeze.mean(dim=-2, keepdim=True)
         rec_img = rearrange(rec_img, 'b (h w) (p1 p2) c -> b c (h p1) (w p2)', p1=patch_size[0], p2=patch_size[1], h=14, w=14)
-        img = ToPILImage()(rec_img[0, :].clip(0,0.996))
+        # rec_img.size() -- torch.Size([1, 3, 224, 224])
+
+        img = ToPILImage()(rec_img[0, :].clamp(0,0.996).cpu())
         img.save(f"{args.save_path}/rec_img.jpg")
 
         #save random mask img
         img_mask = rec_img * mask
-        img = ToPILImage()(img_mask[0, :])
+        img = ToPILImage()(img_mask[0, :].cpu())
         img.save(f"{args.save_path}/mask_img.jpg")
 
 if __name__ == '__main__':
